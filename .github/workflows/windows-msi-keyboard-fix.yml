@@ -1,0 +1,62 @@
+name: Build Windows MSI Keyboard Fix
+
+on:
+  push:
+    branches:
+      - codex/build-windows-msi-keyboard-fix
+  workflow_dispatch:
+
+env:
+  CMAKE_CONFIGURE: cmake -Bbuild -DCMAKE_BUILD_TYPE=Release -DSKIP_BUILD_TESTS=ON -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
+  PACKAGE_PREFIX: deskflow
+
+jobs:
+  windows-msi:
+    name: windows-2022-x64-msi
+    runs-on: windows-2022
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Setup VC++ environment
+        uses: TheMrMilchmann/setup-msvc-dev@v4
+        with:
+          arch: amd64
+          spectre: true
+
+      - name: Install dependencies
+        id: get-deps
+        uses: ./.github/actions/install-dependencies
+        with:
+          qt-version: 6.10.2
+          vcpkg-triplet: x64-windows-release
+
+      - name: Get version
+        uses: ./.github/actions/get-version
+
+      - name: Update Windows Paths
+        shell: pwsh
+        run: echo "C:\Program Files\doxygen\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Configure
+        run: ${{ env.CMAKE_CONFIGURE }} -G Ninja ${{ steps.get-deps.outputs.vcpkg-cmake-config }} -DPACKAGE_VERSION_LABEL="${{ env.DESKFLOW_PACKAGE_VERSION }}"
+
+      - name: Build package
+        shell: bash
+        run: cmake --build build --config Release -j8 --target package
+
+      - name: List packages
+        shell: pwsh
+        run: Get-ChildItem -Path build -Filter 'deskflow*.*' | Select-Object Name,Length,FullName
+
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v7
+        with:
+          name: package-deskflow-windows-2022-x64-keyboard-fix
+          path: build/deskflow[-_]*.*
+          if-no-files-found: error
