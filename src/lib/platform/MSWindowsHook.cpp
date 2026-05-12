@@ -37,6 +37,7 @@ static BYTE g_keyState[256] = {0};
 static DWORD g_hookThread = 0;
 static bool g_fakeServerInput = false;
 static BOOL g_isPrimary = TRUE;
+static HKL g_keyLayout = nullptr;
 
 MSWindowsHook::~MSWindowsHook()
 {
@@ -101,6 +102,7 @@ int MSWindowsHook::init(DWORD threadID)
   g_yScreen = 0;
   g_wScreen = 0;
   g_hScreen = 0;
+  g_keyLayout = nullptr;
 
   return 1;
 }
@@ -140,6 +142,11 @@ void MSWindowsHook::setMode(EHookMode mode)
     return;
   }
   g_mode = mode;
+}
+
+void MSWindowsHook::setKeyboardLayout(HKL keyLayout)
+{
+  g_keyLayout = keyLayout;
 }
 
 static void keyboardGetState(BYTE keys[256], DWORD vkCode, bool kf_up)
@@ -186,17 +193,26 @@ static WPARAM makeKeyMsg(UINT virtKey, WCHAR wc, bool noAltGr)
   return MAKEWPARAM((WORD)wc, MAKEWORD(virtKey & 0xff, noAltGr ? 1 : 0));
 }
 
+static int toUnicode(UINT virtualKey, UINT scanCode, BYTE keyState[256], WCHAR buffer[], int size, UINT flags)
+{
+  if (g_keyLayout != nullptr) {
+    return ToUnicodeEx(virtualKey, scanCode, keyState, buffer, size, flags, g_keyLayout);
+  }
+
+  return ToUnicode(virtualKey, scanCode, keyState, buffer, size, flags);
+}
+
 static void setDeadKey(WCHAR wc[], int size, UINT flags)
 {
   if (g_deadVirtKey != 0) {
     auto virtualKey = static_cast<UINT>(g_deadVirtKey);
     auto scanCode = static_cast<UINT>((g_deadLParam & 0x10ff0000u) >> 16);
-    if (ToUnicode(virtualKey, scanCode, g_deadKeyState, wc, size, flags) >= 2) {
+    if (toUnicode(virtualKey, scanCode, g_deadKeyState, wc, size, flags) >= 2) {
       // If ToUnicode returned >=2, it means that we accidentally removed
       // a double dead key instead of restoring it. Thus, we call
       // ToUnicode again with the same parameters to restore the
       // internal dead key state.
-      ToUnicode(virtualKey, scanCode, g_deadKeyState, wc, size, flags);
+      toUnicode(virtualKey, scanCode, g_deadKeyState, wc, size, flags);
 
       // We need to keep track of this because g_deadVirtKey will be
       // cleared later on; this would cause the dead key release to
@@ -300,7 +316,7 @@ static bool keyboardHookHandler(WPARAM wParam, LPARAM lParam)
   setDeadKey(wc, 2, flags);
 
   UINT scanCode = ((lParam & 0x10ff0000u) >> 16);
-  int n = ToUnicode((UINT)wParam, scanCode, keys, wc, 2, flags);
+  int n = toUnicode((UINT)wParam, scanCode, keys, wc, 2, flags);
 
   // if mapping failed and ctrl and alt are pressed then try again
   // with both not pressed.  this handles the case where ctrl and
@@ -324,7 +340,7 @@ static bool keyboardHookHandler(WPARAM wParam, LPARAM lParam)
     keys2[VK_LMENU] = 0;
     keys2[VK_RMENU] = 0;
     keys2[VK_MENU] = 0;
-    n = ToUnicode((UINT)wParam, scanCode, keys2, wc, 2, flags);
+    n = toUnicode((UINT)wParam, scanCode, keys2, wc, 2, flags);
   }
 
   PostThreadMessage(
@@ -380,7 +396,7 @@ static bool keyboardHookHandler(WPARAM wParam, LPARAM lParam)
 
   // put back the dead key, if any, for the application to use
   if (g_deadVirtKey != 0) {
-    ToUnicode((UINT)g_deadVirtKey, (g_deadLParam & 0x10ff0000u) >> 16, g_deadKeyState, wc, 2, flags);
+    toUnicode((UINT)g_deadVirtKey, (g_deadLParam & 0x10ff0000u) >> 16, g_deadKeyState, wc, 2, flags);
   }
 
   // clear out old dead key state

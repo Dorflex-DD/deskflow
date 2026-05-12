@@ -11,6 +11,7 @@
 #include "base/IEventQueue.h"
 #include "base/Log.h"
 #include "common/Constants.h"
+#include "deskflow/win32/AppUtilWindows.h"
 #include "platform/MSWindowsDesks.h"
 #include "platform/MSWindowsHandle.h"
 
@@ -859,6 +860,19 @@ void MSWindowsKeyState::pollPressedKeys(KeyButtonSet &pressedKeys) const
   }
 }
 
+HKL MSWindowsKeyState::getActiveKeyLayout() const
+{
+  if (const auto layout = AppUtilWindows::instance().getCurrentKeyboardLayout()) {
+    return layout;
+  }
+
+  if (m_keyLayout != nullptr) {
+    return m_keyLayout;
+  }
+
+  return GetKeyboardLayout(0);
+}
+
 void MSWindowsKeyState::getKeyMap(deskflow::KeyMap &keyMap)
 {
   // update keyboard groups
@@ -869,17 +883,30 @@ void MSWindowsKeyState::getKeyMap(deskflow::KeyMap &keyMap)
       m_groupMap[m_groups[g]] = g;
     }
   }
-  HKL activeLayout = GetKeyboardLayout(0);
 
   // clear table
   memset(m_virtualKeyToButton, 0, sizeof(m_virtualKeyToButton));
   m_keyToVKMap.clear();
 
+  const HKL activeLayout = getActiveKeyLayout();
+  int32_t activeGroup = 0;
+  bool foundActiveGroup = false;
+  for (int32_t g = 0; g < static_cast<int32_t>(m_groups.size()); ++g) {
+    if (m_groups[g] == activeLayout) {
+      activeGroup = g;
+      foundActiveGroup = true;
+      break;
+    }
+  }
+  if (!foundActiveGroup && !m_groups.empty()) {
+    LOG_DEBUG("active keyboard layout is not in the loaded layout list, using first loaded layout");
+  }
+
   deskflow::KeyMap::KeyItem item;
   int32_t numGroups = (int32_t)m_groups.size();
   for (int32_t g = 0; g < numGroups; ++g) {
     item.m_group = g;
-    ActivateKeyboardLayout(m_groups[g], 0);
+    const HKL groupLayout = m_groups[g];
 
     // clear tables
     memset(m_buttonToVK, 0, sizeof(m_buttonToVK));
@@ -887,7 +914,7 @@ void MSWindowsKeyState::getKeyMap(deskflow::KeyMap &keyMap)
 
     // map buttons (scancodes) to virtual keys
     for (KeyButton i = 1; i < 256; ++i) {
-      UINT vk = MapVirtualKey(i, 1);
+      UINT vk = MapVirtualKeyEx(i, MAPVK_VSC_TO_VK, groupLayout);
       if (vk == 0) {
         // unmapped
         continue;
@@ -902,7 +929,7 @@ void MSWindowsKeyState::getKeyMap(deskflow::KeyMap &keyMap)
         // caused bug #2799 (right shift broken for osx).
         // we must not repeat this same mistake and must fix platform
         // specific bugs in code that only affects that platform.
-        if (MapVirtualKey(VK_RSHIFT, 0) == i) {
+        if (MapVirtualKeyEx(VK_RSHIFT, MAPVK_VK_TO_VSC, groupLayout) == i) {
           vk = VK_RSHIFT;
         } else {
           vk = VK_LSHIFT;
@@ -981,7 +1008,7 @@ void MSWindowsKeyState::getKeyMap(deskflow::KeyMap &keyMap)
       }
 
       // get the button
-      KeyButton button = static_cast<KeyButton>(MapVirtualKey(i, 0));
+      KeyButton button = static_cast<KeyButton>(MapVirtualKeyEx(i, MAPVK_VK_TO_VSC, groupLayout));
       if (button == 0) {
         continue;
       }
@@ -1019,7 +1046,7 @@ void MSWindowsKeyState::getKeyMap(deskflow::KeyMap &keyMap)
     }
 
     // set virtual key to button table
-    if (activeLayout == m_groups[g]) {
+    if (g == activeGroup) {
       for (KeyButton i = 0; i < 512; ++i) {
         if (m_buttonToVK[i] != 0) {
           if (m_virtualKeyToButton[m_buttonToVK[i]] == 0) {
@@ -1095,7 +1122,7 @@ void MSWindowsKeyState::getKeyMap(deskflow::KeyMap &keyMap)
                 keys[modifiers[k].m_vk2] = 0;
               }
             }
-            id[j] = getIDForKey(item, button, m_buttonToVK[i], keys, m_groups[g]);
+            id[j] = getIDForKey(item, button, m_buttonToVK[i], keys, groupLayout);
             if (id[j] != 0) {
               anyFound = true;
             }
@@ -1155,9 +1182,6 @@ void MSWindowsKeyState::getKeyMap(deskflow::KeyMap &keyMap)
       }
     }
   }
-
-  // restore keyboard layout
-  ActivateKeyboardLayout(activeLayout, 0);
 }
 
 void MSWindowsKeyState::fakeKey(const Keystroke &keystroke)

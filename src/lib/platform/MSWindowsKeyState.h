@@ -173,6 +173,7 @@ private:
 
   bool getGroups(GroupList &) const;
   void setWindowGroup(int32_t group);
+  HKL getActiveKeyLayout() const;
 
   KeyID getIDForKey(deskflow::KeyMap::KeyItem &item, KeyButton button, UINT virtualKey, PBYTE keyState, HKL hkl) const;
 

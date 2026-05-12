@@ -62,6 +62,8 @@ public:
 
   void setMode(EHookMode mode);
 
+  static void setKeyboardLayout(HKL keyLayout);
+
   static EHookResult install();
 
   static int uninstall();

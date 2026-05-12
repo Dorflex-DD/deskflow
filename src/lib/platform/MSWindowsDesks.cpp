@@ -513,6 +513,9 @@ void MSWindowsDesks::deskEnter(Desk *desk)
   AttachThreadInput(thatThread, thisThread, TRUE);
   SetForegroundWindow(desk->m_foregroundWindow);
   AttachThreadInput(thatThread, thisThread, FALSE);
+  if (m_isPrimary) {
+    MSWindowsHook::setKeyboardLayout(AppUtilWindows::instance().getCurrentKeyboardLayout());
+  }
   EnableWindow(desk->m_window, desk->m_lowLevel ? FALSE : TRUE);
   desk->m_foregroundWindow = nullptr;
 }
@@ -522,9 +525,8 @@ void MSWindowsDesks::deskLeave(Desk *desk, HKL keyLayout)
   setCursorVisibility(false);
 
   if (m_isPrimary) {
-    // map a window to hide the cursor and to use whatever keyboard
-    // layout we choose rather than the keyboard layout of the last
-    // active window.
+    // map a window to hide the cursor while the hook translates with
+    // the captured keyboard layout.
     int x, y, w, h;
     if (desk->m_lowLevel) {
       // with a low level hook the cursor will never budge so
@@ -544,8 +546,9 @@ void MSWindowsDesks::deskLeave(Desk *desk, HKL keyLayout)
     }
     SetWindowPos(desk->m_window, HWND_TOP, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
 
-    // switch to requested keyboard layout
-    ActivateKeyboardLayout(keyLayout, 0);
+    // Translate hook events with the requested layout without activating
+    // it as the Deskflow thread/window layout.
+    MSWindowsHook::setKeyboardLayout(keyLayout);
 
     // if not using low-level hooks we have to also activate the
     // window to ensure we don't lose keyboard focus.
